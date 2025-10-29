@@ -1,0 +1,8 @@
+[package]
+name = "auto_universal_sdk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iced = { version = "0.13", features = ["advanced"] }
+arboard = "3.4"
