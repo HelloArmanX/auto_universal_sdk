@@ -49,6 +49,7 @@ struct CodeGenerator {
     engine_sync_content: text_editor::Content,
     engine_async_content: text_editor::Content,
     module_content: text_editor::Content,
+    request_builder_content: text_editor::Content,
     request_struct_content: text_editor::Content,
     test_method_content: text_editor::Content,
     db_agent_content: text_editor::Content,
@@ -73,6 +74,7 @@ enum Message {
     CopyEngineSyncToClipboard,
     CopyEngineAsyncToClipboard,
     CopyModuleToClipboard,
+    CopyRequestBuilderToClipboard,
     CopyRequestStructToClipboard,
     CopyTestMethodToClipboard,
     CopyDbAgentToClipboard,
@@ -81,6 +83,7 @@ enum Message {
     EngineSyncAction(text_editor::Action),
     EngineAsyncAction(text_editor::Action),
     ModuleAction(text_editor::Action),
+    RequestBuilderAction(text_editor::Action),
     RequestStructAction(text_editor::Action),
     TestMethodAction(text_editor::Action),
     DbAgentAction(text_editor::Action),
@@ -103,6 +106,7 @@ impl Default for CodeGenerator {
             engine_sync_content: text_editor::Content::new(),
             engine_async_content: text_editor::Content::new(),
             module_content: text_editor::Content::new(),
+            request_builder_content: text_editor::Content::new(),
             request_struct_content: text_editor::Content::new(),
             test_method_content: text_editor::Content::new(),
             db_agent_content: text_editor::Content::new(),
@@ -174,6 +178,14 @@ impl CodeGenerator {
                 let engine_sync_code = self.generate_engine_sync_function(&rust_function_name);
                 let engine_async_code = self.generate_engine_async_function(&rust_function_name);
                 let module_code = self.generate_module_function(&rust_function_name);
+                
+                // 生成 request_builder 代码（仅网络请求模式）
+                let request_builder_code = if self.operation_type == Some(OperationType::Network) {
+                    self.generate_request_builder_function(&rust_function_name)
+                } else {
+                    String::new()
+                };
+                
                 let request_struct_code = if !self.request_body_name.is_empty() {
                     self.generate_request_struct()
                 } else {
@@ -196,6 +208,7 @@ impl CodeGenerator {
                 self.engine_sync_content = text_editor::Content::with_text(&engine_sync_code);
                 self.engine_async_content = text_editor::Content::with_text(&engine_async_code);
                 self.module_content = text_editor::Content::with_text(&module_code);
+                self.request_builder_content = text_editor::Content::with_text(&request_builder_code);
                 self.request_struct_content = text_editor::Content::with_text(&request_struct_code);
                 self.test_method_content = text_editor::Content::with_text(&test_method_code);
                 self.db_agent_content = text_editor::Content::with_text(&db_agent_code);
@@ -215,6 +228,7 @@ impl CodeGenerator {
                 self.engine_sync_content = text_editor::Content::new();
                 self.engine_async_content = text_editor::Content::new();
                 self.module_content = text_editor::Content::new();
+                self.request_builder_content = text_editor::Content::new();
                 self.request_struct_content = text_editor::Content::new();
                 self.test_method_content = text_editor::Content::new();
                 self.db_agent_content = text_editor::Content::new();
@@ -252,6 +266,15 @@ impl CodeGenerator {
                     }
                 }
             }
+            Message::CopyRequestBuilderToClipboard => {
+                if let Ok(mut clipboard) = Clipboard::new() {
+                    if clipboard.set_text(&self.request_builder_content.text()).is_ok() {
+                        self.status_message = "request_builder 文件已复制到剪贴板！".to_string();
+                    } else {
+                        self.status_message = "复制失败！".to_string();
+                    }
+                }
+            }
             Message::CopyRequestStructToClipboard => {
                 if let Ok(mut clipboard) = Clipboard::new() {
                     if clipboard
@@ -272,6 +295,9 @@ impl CodeGenerator {
             }
             Message::ModuleAction(action) => {
                 self.module_content.perform(action);
+            }
+            Message::RequestBuilderAction(action) => {
+                self.request_builder_content.perform(action);
             }
             Message::RequestStructAction(action) => {
                 self.request_struct_content.perform(action);
@@ -475,6 +501,25 @@ impl CodeGenerator {
         ]
         .spacing(5);
 
+        // request_builder 文件输出框（仅在网络请求模式下显示）
+        let request_builder_section = if self.operation_type == Some(OperationType::Network) {
+            column![
+                row![
+                    text("request_builder 文件").size(16),
+                    button(text("复制").size(14))
+                        .on_press(Message::CopyRequestBuilderToClipboard)
+                        .padding(5),
+                ]
+                .spacing(10),
+                text_editor(&self.request_builder_content)
+                    .on_action(Message::RequestBuilderAction)
+                    .height(200),
+            ]
+            .spacing(5)
+        } else {
+            column![]
+        };
+
         // 请求体结构输出框（仅在有请求体名称时显示）
         let request_struct_section = if !self.request_body_name.is_empty() {
             column![
@@ -575,6 +620,7 @@ impl CodeGenerator {
             engine_sync_section,
             engine_async_section,
             module_section,
+            request_builder_section,
             request_struct_section,
             test_method_section,
             db_sections,
@@ -775,6 +821,82 @@ where
             }
             None => String::new(),
         }
+    }
+
+    fn generate_request_builder_function(&self, rust_function_name: &str) -> String {
+        let cb_type = if self.callback_return_type.is_empty() {
+            "()".to_string()
+        } else {
+            self.callback_return_type.clone()
+        };
+
+        // 使用规范化的参数处理方法
+        let params_with_ref = self.normalize_params_for_request_builder();
+        
+        // 如果没有请求体名称，返回空字符串
+        if self.request_body_name.is_empty() {
+            return String::new();
+        }
+
+        // 生成 Pb 结构体名称（添加 "Pb" 前缀）
+        let pb_request_name = format!("Pb{}", self.request_body_name);
+        
+        // 请求体结构名称（不带 "Pb" 前缀）
+        let request_name = &self.request_body_name;
+        
+        // 构建函数名：在 rust_function_name 前添加 "build_"
+        let build_function_name = format!("build_{}_request", rust_function_name);
+
+        format!(
+            r#"pub(crate) fn {}<CB>(
+    &self,
+    {},
+    cb: CB,
+) -> RmtpQuery
+where
+    CB: FnOnce(Result<{}, EngineError>) + Send + 'static,
+{{
+    let mut pb_req = {}::new();
+    let req = {}::new(pb_req, cb);
+    self.build_query(req.get_method(), "", req.get_qos(), Box::new(req))
+}}"#,
+            build_function_name,
+            params_with_ref,
+            cb_type,
+            pb_request_name,
+            request_name
+        )
+    }
+    
+    // 规范化参数，确保格式为 "name: type"
+    fn normalize_params_for_request_builder(&self) -> String {
+        self.clean_params(&self.function_params)
+            .split(',')
+            .filter_map(|param| {
+                let trimmed = param.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                
+                // 分割参数为名称和类型
+                let parts: Vec<&str> = trimmed.split(':').map(|s| s.trim()).collect();
+                if parts.len() != 2 {
+                    return Some(trimmed.to_string());
+                }
+                
+                let param_name = parts[0];
+                let mut param_type = parts[1].trim_end_matches(',').trim();
+                
+                // 如果类型是 String，转换为 &str
+                if param_type == "String" {
+                    param_type = "&str";
+                }
+                
+                // 返回正确格式: name: type
+                Some(format!("{}: {}", param_name, param_type))
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn generate_request_struct(&self) -> String {
