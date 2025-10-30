@@ -862,6 +862,16 @@ where
         )
     }
 
+    // 根据参数类型规范化参数名称
+    fn normalize_param_name(&self, param_name: &str, param_type: &str) -> String {
+        // 如果类型是 ConversationType 或 DbConversationType，统一使用 conv_type
+        if param_type == "ConversationType" || param_type == "DbConversationType" {
+            "conv_type".to_string()
+        } else {
+            param_name.to_string()
+        }
+    }
+
     // 规范化参数，确保格式为 "name: type"
     fn normalize_params_for_request_builder(&self) -> String {
         self.clean_params(&self.function_params)
@@ -886,8 +896,11 @@ where
                     param_type = "&str";
                 }
 
+                // 规范化参数名称
+                let normalized_name = self.normalize_param_name(param_name, param_type);
+
                 // 返回正确格式: name: type
-                Some(format!("{}: {}", param_name, param_type))
+                Some(format!("{}: {}", normalized_name, param_type))
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -1140,20 +1153,23 @@ fn {0}() {{
                     return None;
                 }
 
-                let parts: Vec<&str> = trimmed.split(':').collect();
+                let parts: Vec<&str> = trimmed.split(':').map(|s| s.trim()).collect();
                 if parts.len() != 2 {
                     return None;
                 }
 
-                let name = parts[0].trim();
-                let mut param_type = parts[1].trim();
+                let param_name = parts[0];
+                let mut param_type = parts[1];
 
                 // 如果是 &str，转换为 String
                 if param_type == "&str" {
                     param_type = "String";
                 }
 
-                Some(format!("    {}: {},", name, param_type))
+                // 规范化参数名称
+                let normalized_name = self.normalize_param_name(param_name, param_type);
+
+                Some(format!("    {}: {},", normalized_name, param_type))
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -1172,7 +1188,20 @@ fn {0}() {{
                 if trimmed.is_empty() {
                     return None;
                 }
-                Some(trimmed.to_string())
+                
+                // 分割参数为名称和类型
+                let parts: Vec<&str> = trimmed.split(':').map(|s| s.trim()).collect();
+                if parts.len() != 2 {
+                    return Some(trimmed.to_string());
+                }
+                
+                let param_name = parts[0];
+                let param_type = parts[1];
+                
+                // 规范化参数名称
+                let normalized_name = self.normalize_param_name(param_name, param_type);
+                
+                Some(format!("{}: {}", normalized_name, param_type))
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -1192,19 +1221,22 @@ fn {0}() {{
                     return None;
                 }
 
-                let parts: Vec<&str> = trimmed.split(':').collect();
+                let parts: Vec<&str> = trimmed.split(':').map(|s| s.trim()).collect();
                 if parts.len() != 2 {
                     return None;
                 }
 
-                let name = parts[0].trim();
-                let param_type = parts[1].trim();
+                let param_name = parts[0];
+                let param_type = parts[1];
+
+                // 规范化参数名称
+                let normalized_name = self.normalize_param_name(param_name, param_type);
 
                 // 如果参数是 &str，需要转换为 String
                 if param_type == "&str" {
-                    Some(format!("{}: {}.to_string()", name, name))
+                    Some(format!("{}: {}.to_string()", normalized_name, normalized_name))
                 } else {
-                    Some(format!("{}", name))
+                    Some(format!("{}", normalized_name))
                 }
             })
             .collect::<Vec<_>>()
@@ -1219,10 +1251,20 @@ fn {0}() {{
                 if trimmed.is_empty() {
                     return None;
                 }
-                trimmed
-                    .split(':')
-                    .next()
-                    .map(|name| name.trim().to_string())
+                
+                // 分割参数为名称和类型
+                let parts: Vec<&str> = trimmed.split(':').map(|s| s.trim()).collect();
+                if parts.len() != 2 {
+                    return trimmed.split(':').next().map(|name| name.trim().to_string());
+                }
+                
+                let param_name = parts[0];
+                let param_type = parts[1].trim();
+                
+                // 规范化参数名称
+                let normalized_name = self.normalize_param_name(param_name, param_type);
+                
+                Some(normalized_name)
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -1274,11 +1316,25 @@ fn {0}() {{
                 if trimmed.is_empty() {
                     return None;
                 }
-                if trimmed.contains(": String") {
-                    Some(trimmed.replace(": String", ": &str"))
-                } else {
-                    Some(trimmed.to_string())
+                
+                // 分割参数为名称和类型
+                let parts: Vec<&str> = trimmed.split(':').map(|s| s.trim()).collect();
+                if parts.len() != 2 {
+                    return Some(trimmed.to_string());
                 }
+                
+                let param_name = parts[0];
+                let mut param_type = parts[1].trim();
+                
+                // 如果类型是 String，转换为 &str
+                if param_type == "String" {
+                    param_type = "&str";
+                }
+                
+                // 规范化参数名称
+                let normalized_name = self.normalize_param_name(param_name, param_type);
+                
+                Some(format!("{}: {}", normalized_name, param_type))
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -1362,8 +1418,18 @@ fn {0}() {{
                     return None;
                 }
 
-                let param_name = trimmed.split(':').next()?.trim();
-                Some(param_name.to_string())
+                // 分割参数为名称和类型
+                let parts: Vec<&str> = trimmed.split(':').map(|s| s.trim()).collect();
+                if parts.len() != 2 {
+                    return trimmed.split(':').next().map(|name| name.trim().to_string());
+                }
+                
+                let param_name = parts[0];
+                let param_type = parts[1];
+                
+                // 规范化参数名称
+                let normalized_name = self.normalize_param_name(param_name, param_type);
+                Some(normalized_name)
             })
             .collect::<Vec<_>>()
             .join(", ")
