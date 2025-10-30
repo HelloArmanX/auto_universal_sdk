@@ -1538,10 +1538,26 @@ fn {0}() {{
     let db_lock_clone = self.db_lock.clone();
 {}
     spawn_blocking(move || {{
-        let db_ret = db_lock_clone.read();
-        let db = db_ret.map_err(|error| DbErrorInfo::from_lock(error))?;
+        let db = db_lock_clone
+                .read()
+                .map_err(|error| DbErrorInfo::from_lock(error))?;
+            let mut transaction_err_opt = None;
+            let transaction_ret = db.run_transaction(|_| {{
 
-        Ok(true)
+                if let Err(exp) = ret {{
+                    transaction_err_opt = Some(DbErrorInfo::from(exp));
+                    return false;
+                }}
+
+                return true; //返回 false 回滚整个事务
+            }});
+            if let Some(error) = transaction_err_opt {{
+                return Err(error);
+            }}
+            if let Err(exp) = transaction_ret {{
+                return Err(DbErrorInfo::from(exp));
+            }}
+            Ok(())
     }})
 }}"#,
             rust_function_name, params_with_ref, return_type, str_conversions
